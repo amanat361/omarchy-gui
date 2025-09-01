@@ -1,9 +1,15 @@
+import { useState } from 'react';
 import "./index.css";
+import { AppMenu } from './components/layout/AppMenu';
+import { MainContent } from './components/layout/MainContent';
 
 export function App() {
-  return (
-    <div className="flex flex-col min-h-screen min-w-screen max-w-screen max-h-screen">
+  const [activeCategory, setActiveCategory] = useState('display');
 
+  return (
+    <div className="flex h-screen w-screen overflow-hidden">
+      <AppMenu activeCategory={activeCategory} onCategoryChange={setActiveCategory} />
+      <MainContent activeCategory={activeCategory} />
     </div>
   );
 }

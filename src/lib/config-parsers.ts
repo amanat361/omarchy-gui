@@ -71,86 +71,103 @@ export class HyprlandInputParser {
   }
   
   static updateInputBlock(content: string, newConfig: Partial<InputConfig>): string {
-    let result = content;
-    
-    // Find or create input block
-    const inputMatch = content.match(/input\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}/s);
-    if (!inputMatch || !inputMatch[1]) {
+    // Helper function to find matching braces
+    const findMatchingBrace = (text: string, start: number): number => {
+      let depth = 0;
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === '{') depth++;
+        if (text[i] === '}') {
+          depth--;
+          if (depth === 0) return i;
+        }
+      }
+      return -1;
+    };
+
+    // Find the input block more carefully
+    const inputStart = content.search(/input\s*\{/);
+    if (inputStart === -1) {
       // Create new input block if it doesn't exist
       const newInputBlock = this.generateInputBlock(newConfig);
       return content + '\n\n' + newInputBlock;
     }
+
+    const braceStart = content.indexOf('{', inputStart);
+    const braceEnd = findMatchingBrace(content, braceStart);
     
-    let inputBlock = inputMatch[1];
-    
+    if (braceEnd === -1) {
+      throw new Error('Malformed input block - missing closing brace');
+    }
+
+    const inputBlock = content.substring(braceStart + 1, braceEnd);
+    let modifiedInputBlock = inputBlock;
+
     // Update simple values
-    const updateStringValue = (key: string, value: string | undefined) => {
+    const updateValue = (key: string, value: string | number | undefined) => {
       if (value === undefined) return;
       
-      const regex = new RegExp(`(\\s*${key}\\s*=\\s*)[^\\n#]+`, 'gi');
+      const regex = new RegExp(`(\\s*${key}\\s*=\\s*)[^\\n#]*`, 'gm');
       const replacement = `$1${value}`;
       
-      if (inputBlock.match(regex)) {
-        inputBlock = inputBlock.replace(regex, replacement);
+      if (modifiedInputBlock.match(regex)) {
+        modifiedInputBlock = modifiedInputBlock.replace(regex, replacement);
       } else {
-        inputBlock = `  ${key} = ${value}\n` + inputBlock;
+        // Add new value at the beginning of the block
+        modifiedInputBlock = `  ${key} = ${value}\n` + modifiedInputBlock;
       }
     };
-    
-    const updateNumberValue = (key: string, value: number | undefined) => {
-      if (value === undefined) return;
-      
-      const regex = new RegExp(`(\\s*${key}\\s*=\\s*)[^\\n#]+`, 'gi');
-      const replacement = `$1${value}`;
-      
-      if (inputBlock.match(regex)) {
-        inputBlock = inputBlock.replace(regex, replacement);
-      } else {
-        inputBlock = `  ${key} = ${value}\n` + inputBlock;
-      }
-    };
-    
-    updateStringValue('kb_layout', newConfig.kb_layout);
-    updateStringValue('kb_options', newConfig.kb_options);
-    updateNumberValue('repeat_rate', newConfig.repeat_rate);
-    updateNumberValue('repeat_delay', newConfig.repeat_delay);
-    updateNumberValue('sensitivity', newConfig.sensitivity);
-    
+
+    updateValue('kb_layout', newConfig.kb_layout);
+    updateValue('kb_options', newConfig.kb_options);
+    updateValue('repeat_rate', newConfig.repeat_rate);
+    updateValue('repeat_delay', newConfig.repeat_delay);
+    updateValue('sensitivity', newConfig.sensitivity);
+
     // Handle touchpad block
     if (newConfig.touchpad) {
-      const touchpadMatch = inputBlock.match(/touchpad\s*\{([^}]*)\}/s);
-      if (touchpadMatch && touchpadMatch[1]) {
-        let touchpadBlock = touchpadMatch[1];
+      const touchpadStart = modifiedInputBlock.search(/touchpad\s*\{/);
+      if (touchpadStart !== -1) {
+        // Find the touchpad block
+        const touchpadBraceStart = modifiedInputBlock.indexOf('{', touchpadStart);
+        const touchpadBraceEnd = findMatchingBrace(modifiedInputBlock, touchpadBraceStart);
         
-        const updateTouchpadValue = (key: string, value: boolean | number | undefined) => {
-          if (value === undefined) return;
+        if (touchpadBraceEnd !== -1) {
+          let touchpadBlock = modifiedInputBlock.substring(touchpadBraceStart + 1, touchpadBraceEnd);
           
-          const regex = new RegExp(`(\\s*${key}\\s*=\\s*)[^\\n#]+`, 'gi');
-          const replacement = `$1${value}`;
+          const updateTouchpadValue = (key: string, value: boolean | number | undefined) => {
+            if (value === undefined) return;
+            
+            const regex = new RegExp(`(\\s*${key}\\s*=\\s*)[^\\n#]*`, 'gm');
+            const replacement = `$1${value}`;
+            
+            if (touchpadBlock.match(regex)) {
+              touchpadBlock = touchpadBlock.replace(regex, replacement);
+            } else {
+              touchpadBlock = `    ${key} = ${value}\n` + touchpadBlock;
+            }
+          };
           
-          if (touchpadBlock.match(regex)) {
-            touchpadBlock = touchpadBlock.replace(regex, replacement);
-          } else {
-            touchpadBlock = `    ${key} = ${value}\n` + touchpadBlock;
-          }
-        };
-        
-        updateTouchpadValue('natural_scroll', newConfig.touchpad.natural_scroll);
-        updateTouchpadValue('clickfinger_behavior', newConfig.touchpad.clickfinger_behavior);
-        updateTouchpadValue('scroll_factor', newConfig.touchpad.scroll_factor);
-        
-        inputBlock = inputBlock.replace(/touchpad\s*\{[^}]*\}/s, `touchpad {\n${touchpadBlock}  }`);
+          updateTouchpadValue('natural_scroll', newConfig.touchpad.natural_scroll);
+          updateTouchpadValue('clickfinger_behavior', newConfig.touchpad.clickfinger_behavior);
+          updateTouchpadValue('scroll_factor', newConfig.touchpad.scroll_factor);
+          
+          // Replace the touchpad block
+          const beforeTouchpad = modifiedInputBlock.substring(0, touchpadStart);
+          const afterTouchpadBlock = modifiedInputBlock.substring(touchpadBraceEnd + 1);
+          modifiedInputBlock = beforeTouchpad + `touchpad {${touchpadBlock}  }` + afterTouchpadBlock;
+        }
       } else {
         // Create touchpad block if it doesn't exist
-        const touchpadBlock = this.generateTouchpadBlock(newConfig.touchpad);
-        inputBlock += '\n  ' + touchpadBlock;
+        const touchpadBlock = this.generateTouchpadBlock(newConfig.touchpad, '  ');
+        modifiedInputBlock += '\n  ' + touchpadBlock;
       }
     }
+
+    // Replace the entire input block in the content
+    const beforeInput = content.substring(0, inputStart);
+    const afterInput = content.substring(braceEnd + 1);
     
-    // Replace the input block in the full content
-    result = content.replace(/input\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}/s, `input {\n${inputBlock}}`);
-    
-    return result;
+    return beforeInput + `input {${modifiedInputBlock}}` + afterInput;
   }
   
   private static generateInputBlock(config: Partial<InputConfig>): string {
